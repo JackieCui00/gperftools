@@ -288,6 +288,9 @@ class PageHeap {
   SpanSet large_normal_;
   SpanSet large_returned_;
 
+  // An extra list for all large normal spans, so we can do decommit in LRU
+  Span large_normal_lru_;
+
   // Array mapping from span length to a doubly linked list of free spans
   //
   // NOTE: index 'i' stores spans of length 'i + 1'.

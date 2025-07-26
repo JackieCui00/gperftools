@@ -90,6 +90,7 @@ PageHeap::PageHeap(Length smallest_span_size)
   static_assert(kClassSizesMax <= (1 << PageMapCache::kValuebits));
   // smallest_span_size needs to be power of 2.
   CHECK_CONDITION((smallest_span_size_ & (smallest_span_size_-1)) == 0);
+  DLL_Init(&large_normal_lru_);
   for (int i = 0; i < kMaxPages; i++) {
     DLL_Init(&free_[i].normal);
     DLL_Init(&free_[i].returned);
@@ -509,9 +510,13 @@ void PageHeap::PrependToFreeList(Span* span) {
     stats_.unmapped_bytes += (span->length << kPageShift);
 
   if (span->length > kMaxPages) {
-    SpanSet *set = &large_normal_;
-    if (span->location == Span::ON_RETURNED_FREELIST)
+    SpanSet *set = nullptr;
+    if (span->location == Span::ON_RETURNED_FREELIST) {
       set = &large_returned_;
+    } else {
+      set = &large_normal_;
+      DLL_Prepend(&large_normal_lru_, span);
+    }
     std::pair<SpanSetIter, bool> p =
         set->insert(SpanPtrWithLength(span));
     ASSERT(p.second); // We never have duplicates since span->start is unique.
@@ -536,9 +541,13 @@ void PageHeap::RemoveFromFreeList(Span* span) {
     stats_.unmapped_bytes -= (span->length << kPageShift);
   }
   if (span->length > kMaxPages) {
-    SpanSet *set = &large_normal_;
-    if (span->location == Span::ON_RETURNED_FREELIST)
+    SpanSet *set = nullptr;
+    if (span->location == Span::ON_RETURNED_FREELIST) {
       set = &large_returned_;
+    } else {
+      set = &large_normal_;
+      DLL_Remove(span);
+    }
     SpanSetIter iter = span->ExtractSpanSetIterator();
     ASSERT(iter->span == span);
     ASSERT(set->find(SpanPtrWithLength(span)) == iter);
@@ -611,9 +620,10 @@ Length PageHeap::ReleaseAtLeastNPages(Length num_pages) {
 
       if (release_index_ == kMaxPages) {
         if (large_normal_.empty()) {
+          ASSERT(DLL_IsEmpty(&large_normal_lru_));
           continue;
         }
-        s = (large_normal_.begin())->span;
+        s = large_normal_lru_.prev;
       } else {
         SpanList* slist = &free_[release_index_];
         if (DLL_IsEmpty(&slist->normal)) {
@@ -796,6 +806,17 @@ bool PageHeap::Check() {
 bool PageHeap::CheckExpensive() {
   bool result = Check();
   CheckSet(&large_normal_, kMaxPages + 1, Span::ON_NORMAL_FREELIST);
+  {
+    size_t count = 0;
+    for (Span* s = large_normal_lru_.next; s != &large_normal_lru_; s = s->next)
+    {
+      ++count;
+      auto iter = large_normal_.find(SpanPtrWithLength(s));
+      CHECK_CONDITION(iter != large_normal_.end());
+      // TODO: maybe check s->SpanSetIter
+    }
+    CHECK_CONDITION(count == large_normal_.size());
+  }
   CheckSet(&large_returned_, kMaxPages + 1, Span::ON_RETURNED_FREELIST);
   for (int s = 1; s <= kMaxPages; s++) {
     CheckList(&free_[s - 1].normal, s, s, Span::ON_NORMAL_FREELIST);

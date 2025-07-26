@@ -7,6 +7,7 @@
 
 #include "config_for_unittests.h"
 
+#include <algorithm>
 #include <stdio.h>
 
 #include <limits>
@@ -80,6 +81,51 @@ TEST(PageHeapTest, Stats) {
   // Delete span 's1'
   ph->Delete(s1);
   CheckStats(ph.get(), 256, 128, 128);
+}
+
+TEST(PageHeapTest, Decommit) {
+  if (!HaveSystemRelease()) {
+      return;
+  }
+
+  std::unique_ptr<tcmalloc::PageHeap> ph(new tcmalloc::PageHeap());
+
+  const size_t NUM_PTRS = 10;
+  std::array<tcmalloc::Span*, NUM_PTRS> used_spans;
+  std::array<tcmalloc::Span*, NUM_PTRS> free_spans;
+  for (size_t i = 0; i < NUM_PTRS; ++i) {
+    // interleave free_spans and used_spans to prevent free_spans from coalescing
+    free_spans.push_back(ph->New(kMaxPages + 1);
+    used_spans.push_back(ph->New(kMaxPages + 1);
+  }
+  std::sort(free_spans.begin(), free_spans.end(),
+    [] (const tcmalloc::Span* l, const tcmalloc::Span* r) {
+      return l->start < r->start;
+  });
+
+  tcmalloc::Span* smallest_span = free_spans[0];
+  for (auto span : free_spans) {
+    ph->Delete(span);
+  }
+
+  for (size_t i = 0; i < 2 * NUM_PTRS; ++i) {
+    ASSERT_EQ(kMaxPages + 1, ph->ReleaseAtLeastNPages(1));
+
+    auto new_span = ph->New(kMaxPages + 1);
+    EXPECT_EQ(smallest_span->start, new_span->start);
+    ph->Delete(new_span);
+  }
+
+  for (size_t i = 1; i < free_spans.size(); ++i) {
+    ASSERT_EQ(free_spans[i]->location, tcmalloc::Span::ON_RETURNED_FREELIST);
+  }
+  ASSERT_EQ(kMaxPages + 1, ph->ReleaseAtLeastNPages(1));
+  ASSERT_EQ(free_spans[0]->location, tcmalloc::Span::ON_RETURNED_FREELIST);
+
+  for (auto span : used_spans)
+  {
+      ph->Delete(span);
+  }
 }
 
 // The number of kMaxPages-sized Spans we will allocate and free during the

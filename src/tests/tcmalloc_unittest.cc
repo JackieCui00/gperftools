@@ -1040,6 +1040,32 @@ TEST(TCMallocTest, ReleaseToSystem) {
   // Releasing less than a page should still trigger a release.
   MallocExtension::instance()->ReleaseToSystem(1);
   EXPECT_EQ(starting_bytes + 2*MB, GetUnmappedBytes());
+
+  static const size_t NUM_PTRS = 10;
+  std::array<void*, NUM_PTRS> used_ptrs;
+  std::array<void*, NUM_PTRS> free_ptrs;
+  for (size_t i = 0; i < NUM_PTRS; ++i) {
+    // interleave used_ptrs and free_ptrs to prevent free_ptrs from coalescing
+    used_ptrs[i] = noopt(malloc(MB));
+    free_ptrs[i] = noopt(malloc(MB));
+  }
+
+  for (auto ptr : free_ptrs) {
+    free(ptr);
+  }
+  EXPECT_EQ(starting_bytes, GetUnmappedBytes());
+
+  for (size_t i = 0; i < 2 * NUM_PTRS; ++i) {
+    MallocExtension::instance()->ReleaseToSystem(MB);
+    a = noopt(malloc(MB));
+    free(a);
+  }
+  MallocExtension::instance()->ReleaseToSystem(MB);
+  EXPECT_EQ(starting_bytes + NUM_PTRS*MB, GetUnmappedBytes());
+
+  for (auto ptr : used_ptrs) {
+    free(ptr);
+  }
 }
 
 TEST(TCMallocTest, AggressiveDecommit) {
