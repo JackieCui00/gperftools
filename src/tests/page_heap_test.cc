@@ -82,6 +82,44 @@ TEST(PageHeapTest, Stats) {
   CheckStats(ph.get(), 256, 128, 128);
 }
 
+TEST(PageHeapTest, Decommit) {
+  if (!HaveSystemRelease()) {
+      return;
+  }
+
+  std::unique_ptr<tcmalloc::PageHeap> ph(new tcmalloc::PageHeap());
+
+  const size_t NUM_PTRS = 10;
+  const size_t ALLOC_PAGES = kMaxPages * 2;
+  std::vector<tcmalloc::Span*> used_spans;
+  std::vector<tcmalloc::Span*> free_spans;
+  for (size_t i = 0; i < NUM_PTRS; ++i) {
+    // interleave free_spans and used_spans to prevent free_spans from coalescing
+    free_spans.push_back(ph->New(ALLOC_PAGES));
+    used_spans.push_back(ph->New(ALLOC_PAGES));
+  }
+
+  for (auto span : free_spans) {
+    ph->Delete(span);
+  }
+
+  for (size_t i = 0; i < 2 * NUM_PTRS; ++i) {
+    EXPECT_EQ(ALLOC_PAGES, ph->ReleaseAtLeastNPages(1));
+
+    auto new_span = ph->New(ALLOC_PAGES);
+    ph->Delete(new_span);
+  }
+
+  EXPECT_EQ(ALLOC_PAGES, ph->ReleaseAtLeastNPages(1));
+  for (size_t i = 0; i < free_spans.size(); ++i) {
+    EXPECT_EQ(free_spans[i]->location, tcmalloc::Span::ON_RETURNED_FREELIST);
+  }
+
+  for (auto span : used_spans) {
+    ph->Delete(span);
+  }
+}
+
 // The number of kMaxPages-sized Spans we will allocate and free during the
 // tests.
 // We will also do twice this many kMaxPages/2-sized ones.
